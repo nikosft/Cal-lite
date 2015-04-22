@@ -477,7 +477,7 @@ public abstract class CongestionControlLayer extends ReliabilityLayer {
 		else if ("LinuxRto".equals(implementation)) return new LinuxRto(config);
 		else if ("PeakhopperRto".equals(implementation)) return new PeakhopperRto(config);
 		else {
-			
+			LOGGER.config("Unknown CONGESTION_CONTROL_ALGORITHM (" + implementation + "), using Cocoa");
 			return new Cocoa(config);
 		}
 	}

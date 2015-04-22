@@ -21,7 +21,7 @@ package org.eclipse.californium.core.network.stack;
 
 import java.util.List;
 import java.util.concurrent.ScheduledExecutorService;
-
+import java.util.logging.Logger;
 
 import org.eclipse.californium.core.coap.EmptyMessage;
 import org.eclipse.californium.core.coap.Request;
@@ -79,7 +79,8 @@ import org.eclipse.californium.elements.Connector;
  */
 public class CoapStack {
 
-	
+	/** The LOGGER. */
+	final static Logger LOGGER = Logger.getLogger(CoapStack.class.getCanonicalName());
 
 	private List<Layer> layers;
 	private Outbox outbox;
@@ -94,7 +95,7 @@ public class CoapStack {
 		ReliabilityLayer reliabilityLayer;
 		if (config.getBoolean(NetworkConfig.Keys.USE_CONGESTION_CONTROL) == true) {
 			reliabilityLayer = CongestionControlLayer.newImplementation(config);
-			
+			LOGGER.config("Enabling congestion control: " + reliabilityLayer.getClass().getSimpleName());
 		} else {
 			reliabilityLayer = new ReliabilityLayer(config);
 		}
@@ -178,7 +179,7 @@ public class CoapStack {
 			if (deliverer != null) {
 				deliverer.deliverRequest(exchange);
 			} else {
-				
+				LOGGER.severe("Top of CoAP stack has no deliverer to deliver request");
 			}
 		}
 
@@ -189,7 +190,7 @@ public class CoapStack {
 			if (deliverer != null) {
 				deliverer.deliverResponse(exchange, response); // notify request that response has arrived
 			} else {
-				
+				LOGGER.severe("Top of CoAP stack has no deliverer to deliver response");
 			}
 		}
 		

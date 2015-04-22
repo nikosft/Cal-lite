@@ -27,7 +27,8 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Enumeration;
 import java.util.LinkedList;
-
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 import org.eclipse.californium.core.CoapServer;
 import org.eclipse.californium.core.coap.Request;
@@ -57,7 +58,8 @@ import org.eclipse.californium.core.server.MessageDeliverer;
  */
 public class EndpointManager {
 	
-
+	/** The logger */
+	private final static Logger LOGGER = Logger.getLogger(EndpointManager.class.getCanonicalName());
 	
 	/** The singleton manager instance */
 	private static EndpointManager manager = new EndpointManager();
@@ -109,9 +111,9 @@ public class EndpointManager {
 		
 		try {
 			default_endpoint.start();
-			
+			LOGGER.log(Level.INFO, "Created implicit default endpoint " + default_endpoint.getAddress());
 		} catch (IOException e) {
-			
+			LOGGER.log(Level.SEVERE, "Could not create default endpoint", e);
 		}
 	}
 	
@@ -125,7 +127,7 @@ public class EndpointManager {
 			this.default_endpoint.destroy();
 		}
 
-		
+		LOGGER.config(endpoint.getAddress()+" becomes default endpoint");
 		
 		this.default_endpoint = endpoint;
 		
@@ -133,7 +135,7 @@ public class EndpointManager {
 			try {
 				default_endpoint.start();
 			} catch (IOException e) {
-				
+				LOGGER.log(Level.SEVERE, "Could not start new default endpoint", e);
 			}
 		}
 	}
@@ -156,7 +158,7 @@ public class EndpointManager {
 				createDefaultSecureEndpoint();
 			}
 		} catch (Exception e) {
-			
+			LOGGER.log(Level.SEVERE, "Exception while getting the default secure endpoint", e);
 		}
 		return default_secure_endpoint;
 	}
@@ -164,7 +166,7 @@ public class EndpointManager {
 	private synchronized void createDefaultSecureEndpoint() {
 		if (default_secure_endpoint != null) return;
 		
-		
+		LOGGER.config("Secure endpoint must be injected via setDefaultSecureEndpoint()");	
 	}
 
 	/**
@@ -182,9 +184,9 @@ public class EndpointManager {
 		if (!this.default_secure_endpoint.isStarted()) {
 			try {
 				default_secure_endpoint.start();
-				
+				LOGGER.log(Level.INFO, "Started new default secure endpoint " + default_endpoint.getAddress());
 			} catch (IOException e) {
-				
+				LOGGER.log(Level.SEVERE, "Could not start new default secure endpoint", e);
 			}
 		}
 	}
@@ -229,7 +231,7 @@ public class EndpointManager {
 		 */
 		@Override
 		public void deliverRequest(Exchange exchange) {
-			
+			LOGGER.severe("Default endpoint without CoapServer has received a request.");
 			exchange.sendReject();
 		}
 		

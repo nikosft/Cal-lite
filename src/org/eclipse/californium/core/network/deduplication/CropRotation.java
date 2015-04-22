@@ -23,7 +23,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
-
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 import org.eclipse.californium.core.network.Exchange;
 import org.eclipse.californium.core.network.Exchange.KeyMID;
@@ -42,7 +43,7 @@ import org.eclipse.californium.core.network.config.NetworkConfig;
  */
 public class CropRotation implements Deduplicator {
 
-	
+	private final static Logger LOGGER = Logger.getLogger(CropRotation.class.getCanonicalName());
 	
 	private ScheduledExecutorService executor;
 	
@@ -127,13 +128,13 @@ public class CropRotation implements Deduplicator {
 				System.gc();
 				
 			} catch (Throwable t) {
-				
+				LOGGER.log(Level.WARNING, "Exception in Crop-Rotation algorithm", t);
 			
 			} finally {
 				try {
 					schedule();
 				} catch (Throwable t) {
-					
+					LOGGER.log(Level.WARNING, "Exception while scheduling Crop-Rotation algorithm", t);
 				}
 			}
 		}
@@ -146,7 +147,7 @@ public class CropRotation implements Deduplicator {
 		}
 		
 		private void schedule() {
-			
+			LOGGER.fine("CR schedules in "+period+" ms");
 			future = executor.schedule(this, period, TimeUnit.MILLISECONDS);
 		}
 		

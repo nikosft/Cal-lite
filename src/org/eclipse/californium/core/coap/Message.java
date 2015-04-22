@@ -23,7 +23,8 @@ import java.net.InetAddress;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
-
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 import org.eclipse.californium.core.coap.CoAP.Type;
 import org.eclipse.californium.core.observe.ObserveManager;
@@ -49,7 +50,7 @@ import org.eclipse.californium.core.observe.ObserveManager;
  */
 public abstract class Message {
 	
-	
+	protected final static Logger LOGGER = Logger.getLogger(Message.class.getCanonicalName());
 	
 	/** The Constant NONE in case no MID has been set. */
 	public static final int NONE = -1;
@@ -566,7 +567,7 @@ public abstract class Message {
 					// guard against faulty MessageObservers
 					handler.onRetransmission();
 				} catch (Exception e) {
-					
+					LOGGER.log(Level.SEVERE, "Faulty MessageObserver for retransmitting events.", e);
 				}
 			}
 	}

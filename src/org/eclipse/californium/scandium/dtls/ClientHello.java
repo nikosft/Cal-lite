@@ -1,0 +1,425 @@
+/*******************************************************************************
+ * Copyright (c) 2014 Institute for Pervasive Computing, ETH Zurich and others.
+ * 
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Eclipse Public License v1.0
+ * and Eclipse Distribution License v1.0 which accompany this distribution.
+ * 
+ * The Eclipse Public License is available at
+ *    http://www.eclipse.org/legal/epl-v10.html
+ * and the Eclipse Distribution License is available at
+ *    http://www.eclipse.org/org/documents/edl-v10.html.
+ * 
+ * Contributors:
+ *    Matthias Kovatsch - creator and main architect
+ *    Stefan Jucker - DTLS implementation
+ ******************************************************************************/
+package org.eclipse.californium.scandium.dtls;
+
+import java.security.SecureRandom;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
+
+import org.eclipse.californium.scandium.dtls.CertificateTypeExtension.CertificateType;
+import org.eclipse.californium.scandium.dtls.SupportedPointFormatsExtension.ECPointFormat;
+import org.eclipse.californium.scandium.dtls.cipher.CipherSuite;
+import org.eclipse.californium.scandium.util.ByteArrayUtils;
+import org.eclipse.californium.scandium.util.DatagramReader;
+import org.eclipse.californium.scandium.util.DatagramWriter;
+
+
+/**
+ * When a client first connects to a server, it is required to send the
+ * ClientHello as its first message. The client can also send a ClientHello in
+ * response to a {@link HelloRequest} or on its own initiative in order to
+ * renegotiate the security parameters in an existing connection. See <a
+ * href="http://tools.ietf.org/html/rfc5246#section-7.4.1.2">RFC 5246</a>.
+ */
+public class ClientHello extends HandshakeMessage {
+
+	// DTLS-specific constants ///////////////////////////////////////////
+
+	private static final int VERSION_BITS = 8; // for major and minor each
+
+	private static final int RANDOM_BYTES = 32;
+
+	private static final int SESSION_ID_LENGTH_BITS = 8;
+
+	private static final int COOKIE_LENGTH = 8;
+
+	private static final int CIPHER_SUITS_LENGTH_BITS = 16;
+
+	private static final int COMPRESSION_METHODS_LENGTH_BITS = 8;
+
+	// Members ///////////////////////////////////////////////////////////
+
+	/**
+	 * The version of the DTLS protocol by which the client wishes to
+	 * communicate during this session.
+	 */
+	private ProtocolVersion clientVersion = new ProtocolVersion();
+
+	/** A client-generated random structure. */
+	private Random random;
+
+	/** The ID of a session the client wishes to use for this connection. */
+	private SessionId sessionId;
+
+	/** The cookie used to prevent flooding attacks (potentially empty). */
+	private Cookie cookie;
+
+	/**
+	 * This is a list of the cryptographic options supported by the client, with
+	 * the client's first preference first.
+	 */
+	private List<CipherSuite> cipherSuites;
+
+	/**
+	 * This is a list of the compression methods supported by the client, sorted
+	 * by client preference.
+	 */
+	private List<CompressionMethod> compressionMethods;
+
+	/**
+	 * Clients MAY request extended functionality from servers by sending data
+	 * in the extensions field.
+	 */
+	private HelloExtensions extensions = null;
+
+	// Constructors ///////////////////////////////////////////////////////////
+
+	/**
+	 * Creates a <em>Client Hello</em> message to be sent to a server.
+	 *  
+	 * @param version the protocol version to use
+	 * @param secureRandom a function to use for creating random values included in the message
+	 * @param useRawPublicKey <code>true</code> if this client prefers <em>raw public keys</em> over <em>X.509</em>
+	 * certificates to be used for (mutual) authentication 
+	 */
+	public ClientHello(ProtocolVersion version, SecureRandom secureRandom, boolean useRawPublicKey) {
+	    
+		this.clientVersion = version;
+		this.random = new Random(secureRandom);
+		this.sessionId = new SessionId(new byte[] {});
+		this.cookie = new Cookie();
+		this.extensions = new HelloExtensions();
+		this.cipherSuites = new ArrayList<>();
+		this.compressionMethods = new ArrayList<>();
+		
+		// the supported elliptic curves
+		List<Integer> curves = Arrays.asList(
+				ECDHServerKeyExchange.NAMED_CURVE_INDEX.get("secp256r1"),
+				ECDHServerKeyExchange.NAMED_CURVE_INDEX.get("secp384r1"),
+				ECDHServerKeyExchange.NAMED_CURVE_INDEX.get("secp521r1"));
+		HelloExtension supportedCurvesExtension = new SupportedEllipticCurvesExtension(curves);
+		this.extensions.addExtension(supportedCurvesExtension);
+		
+		// the supported point formats
+		List<ECPointFormat> formats = Arrays.asList(ECPointFormat.UNCOMPRESSED);
+		HelloExtension supportedPointFormatsExtension = new SupportedPointFormatsExtension(formats);
+		this.extensions.addExtension(supportedPointFormatsExtension);
+		
+		// the certificate types the client is able to provide to the server
+		CertificateTypeExtension clientCertificateType = new ClientCertificateTypeExtension(true);
+		if (useRawPublicKey) {
+			clientCertificateType.addCertificateType(CertificateType.RAW_PUBLIC_KEY);
+			clientCertificateType.addCertificateType(CertificateType.X_509);
+		} else {
+			// the client supports rawPublicKeys but prefers X.509 certificates
+			
+			// http://tools.ietf.org/html/draft-ietf-tls-oob-pubkey-07#section-3:
+			// this extension MUST be omitted if the client only supports X.509 certificates
+			clientCertificateType.addCertificateType(CertificateType.X_509);
+			clientCertificateType.addCertificateType(CertificateType.RAW_PUBLIC_KEY);
+		}
+		
+		// the type of certificates the client is able to process when provided by the server
+		CertificateTypeExtension serverCertificateType = new ServerCertificateTypeExtension(true);
+		if (useRawPublicKey) {
+			serverCertificateType.addCertificateType(CertificateType.RAW_PUBLIC_KEY);
+			serverCertificateType.addCertificateType(CertificateType.X_509);
+		} else {
+			// the client supports rawPublicKeys but prefers X.509 certificates
+			
+			// http://tools.ietf.org/html/draft-ietf-tls-oob-pubkey-07#section-3:
+			// this extension MUST be omitted if the client only supports X.509 certificates
+			serverCertificateType.addCertificateType(CertificateType.X_509);
+			serverCertificateType.addCertificateType(CertificateType.RAW_PUBLIC_KEY);
+		}
+		
+		this.extensions.addExtension(clientCertificateType);
+		this.extensions.addExtension(serverCertificateType);
+	}
+
+	/**
+	 * Creates a <em>Client Hello</em> message to be used for resuming an existing
+	 * DTLS session.
+	 * 
+	 * @param version
+	 *            the protocol version to use
+	 * @param secureRandom
+	 *            a function to use for creating random values included in the message
+	 * @param session
+	 *            the (already existing) DTLS session to resume
+	 */
+	public ClientHello(ProtocolVersion version, SecureRandom secureRandom, DTLSSession session) {
+		this.clientVersion = version;
+		this.random = new Random(secureRandom);
+		this.sessionId = session.getSessionIdentifier();
+		this.cookie = new Cookie();
+		addCipherSuite(session.getWriteState().getCipherSuite());
+		addCompressionMethod(session.getReadState().getCompressionMethod());
+	}
+
+	/**
+	 * Creates an empty message instance.
+	 * This constructor is only used by the {@link #fromByteArray(byte[]) method.
+	 */
+	private ClientHello() {
+	    
+	}
+	
+
+	// Serialization //////////////////////////////////////////////////
+
+	@Override
+	public byte[] fragmentToByteArray() {
+
+        DatagramWriter writer = new DatagramWriter();
+
+        writer.write(clientVersion.getMajor(), VERSION_BITS);
+        writer.write(clientVersion.getMinor(), VERSION_BITS);
+
+        writer.writeBytes(random.getRandomBytes());
+
+        writer.write(sessionId.length(), SESSION_ID_LENGTH_BITS);
+        writer.writeBytes(sessionId.getSessionId());
+
+        writer.write(cookie.length(), COOKIE_LENGTH);
+        writer.writeBytes(cookie.getCookie());
+
+        writer.write(cipherSuites.size() * 2, CIPHER_SUITS_LENGTH_BITS);
+        writer.writeBytes(CipherSuite.listToByteArray(cipherSuites));
+
+        writer.write(compressionMethods.size(), COMPRESSION_METHODS_LENGTH_BITS);
+        writer.writeBytes(CompressionMethod.listToByteArray(compressionMethods));
+
+        if (extensions != null) {
+            writer.writeBytes(extensions.toByteArray());
+        }
+
+        return writer.toByteArray();
+	}
+
+	/**
+	 * Creates a new ClientObject instance from its byte representation.
+	 * 
+	 * @param byteArray the bytes representing the message
+	 * @return the ClientHello object
+	 * @throws HandshakeException if any of the extensions included in the message is of an unsupported type
+	 */
+	public static HandshakeMessage fromByteArray(byte[] byteArray) throws HandshakeException {
+		DatagramReader reader = new DatagramReader(byteArray);
+		ClientHello result = new ClientHello();
+
+		int major = reader.read(VERSION_BITS);
+		int minor = reader.read(VERSION_BITS);
+		result.clientVersion = new ProtocolVersion(major, minor);
+		
+		result.random = new Random(reader.readBytes(RANDOM_BYTES));
+
+		int sessionIdLength = reader.read(SESSION_ID_LENGTH_BITS);
+		result.sessionId = new SessionId(reader.readBytes(sessionIdLength));
+
+		int cookieLength = reader.read(COOKIE_LENGTH);
+		result.cookie = new Cookie(reader.readBytes(cookieLength));
+
+		int cipherSuitesLength = reader.read(CIPHER_SUITS_LENGTH_BITS);
+		result.cipherSuites = CipherSuite.listFromByteArray(reader.readBytes(cipherSuitesLength), cipherSuitesLength / 2); // 2
+
+		int compressionMethodsLength = reader.read(COMPRESSION_METHODS_LENGTH_BITS);
+		result.compressionMethods = CompressionMethod.listFromByteArray(reader.readBytes(compressionMethodsLength), compressionMethodsLength);
+
+		byte[] bytesLeft = reader.readBytesLeft();
+		if (bytesLeft.length > 0) {
+			result.extensions = HelloExtensions.fromByteArray(bytesLeft);
+		}
+		return result;
+
+	}
+
+	// Methods ////////////////////////////////////////////////////////
+
+	@Override
+	public HandshakeType getMessageType() {
+		return HandshakeType.CLIENT_HELLO;
+	}
+
+	@Override
+	public int getMessageLength() {
+		/*
+		 * if no extensions set, empty; otherwise 2 bytes for field length and
+		 * then the length of the extensions. See
+		 * http://tools.ietf.org/html/rfc5246#section-7.4.1.2
+		 */
+		int extensionsLength = (extensions != null) ? (2 + extensions.getLength()) : 0;
+
+		/*
+		 * fixed sizes: version (2) + random (32) + session ID length (1) +
+		 * cookie length (1) + cipher suites length (2) + compression methods
+		 * length (1) = 39
+		 */
+		return 39 + sessionId.length() + cookie.length() + cipherSuites.size() * 2 +
+				compressionMethods.size() + extensionsLength;
+	}
+
+	@Override
+	public String toString() {
+		StringBuilder sb = new StringBuilder();
+		sb.append(super.toString());
+		sb.append("\t\tVersion: ").append(clientVersion.getMajor()).append(", ").append(clientVersion.getMinor());
+		sb.append("\n\t\tRandom: \n").append(random);
+		sb.append("\t\tSession ID Length: ").append(sessionId.length());
+		if (sessionId.length() > 0) {
+			sb.append("\n\t\tSession ID: ").append(ByteArrayUtils.toHexString(sessionId.getSessionId()));
+		}
+		sb.append("\n\t\tCookie Length: ").append(cookie.length());
+		if (cookie.length() > 0) {
+			sb.append("\n\t\tCookie: ").append(ByteArrayUtils.toHexString(cookie.getCookie()));
+		}
+		sb.append("\n\t\tCipher Suites Length: ").append(cipherSuites.size() * 2);
+		sb.append("\n\t\tCipher Suites (").append(cipherSuites.size()).append(" suites)");
+		for (CipherSuite cipher : cipherSuites) {
+			sb.append("\n\t\t\tCipher Suite: ").append(cipher);
+		}
+		sb.append("\n\t\tCompression Methods Length: ").append(compressionMethods.size());
+		sb.append("\n\t\tCompression Methods (").append(compressionMethods.size()).append(" method)");
+		for (CompressionMethod method : compressionMethods) {
+			sb.append("\n\t\t\tCompression Method: ").append(method);
+		}
+		if (extensions != null) {
+			sb.append("\n").append(extensions);
+		}
+
+		return sb.toString();
+	}
+
+	// Getters and Setters ////////////////////////////////////////////
+
+	public ProtocolVersion getClientVersion() {
+		return clientVersion;
+	}
+
+	public void setClientVersion(ProtocolVersion clientVersion) {
+		this.clientVersion = clientVersion;
+	}
+
+	public Random getRandom() {
+		return random;
+	}
+
+	public void setRandom(Random random) {
+		this.random = random;
+	}
+
+	public SessionId getSessionId() {
+		return sessionId;
+	}
+
+	public void setSessionId(SessionId sessionId) {
+		this.sessionId = sessionId;
+	}
+
+	public Cookie getCookie() {
+		return cookie;
+	}
+
+	public void setCookie(Cookie cookie) {
+		this.cookie = cookie;
+	}
+
+	public List<CipherSuite> getCipherSuites() {
+		return Collections.unmodifiableList(cipherSuites);
+	}
+
+	public void setCipherSuits(List<CipherSuite> cipherSuits) {
+		this.cipherSuites.addAll(cipherSuits);
+	}
+
+	public void addCipherSuite(CipherSuite cipherSuite) {
+		if (cipherSuites == null) {
+			cipherSuites = new ArrayList<CipherSuite>();
+		}
+		cipherSuites.add(cipherSuite);
+	}
+
+	public List<CompressionMethod> getCompressionMethods() {
+		return Collections.unmodifiableList(compressionMethods);
+	}
+
+	public void setCompressionMethods(List<CompressionMethod> compressionMethods) {
+		this.compressionMethods.addAll(compressionMethods);
+	}
+
+	public void addCompressionMethod(CompressionMethod compressionMethod) {
+		if (compressionMethods == null) {
+			compressionMethods = new ArrayList<CompressionMethod>();
+		}
+		compressionMethods.add(compressionMethod);
+	}
+	
+	/**
+	 * Gets the supported elliptic curves.
+	 * 
+	 * @return the client's supported elliptic curves extension if available,
+	 *         otherwise <code>null</code>.
+	 */
+	public SupportedEllipticCurvesExtension getSupportedEllipticCurvesExtension() {
+		if (extensions != null) {
+			List<HelloExtension> exts = extensions.getExtensions();
+			for (HelloExtension helloExtension : exts) {
+				if (helloExtension instanceof SupportedEllipticCurvesExtension) {
+					return (SupportedEllipticCurvesExtension) helloExtension;
+				}
+			}
+		}
+		return null;
+	}
+	
+	/**
+	 * 
+	 * @return the client's certificate type extension if available,
+	 *         otherwise <code>null</code>.
+	 */
+	public ClientCertificateTypeExtension getClientCertificateTypeExtension() {
+		if (extensions != null) {
+			List<HelloExtension> exts = extensions.getExtensions();
+			for (HelloExtension helloExtension : exts) {
+				if (helloExtension instanceof ClientCertificateTypeExtension) {
+					return (ClientCertificateTypeExtension) helloExtension;
+				}
+			}
+		}
+		return null;
+	}
+	
+	/**
+	 * 
+	 * @return the client's certificate type extension if available,
+	 *         otherwise <code>null</code>.
+	 */
+	public ServerCertificateTypeExtension getServerCertificateTypeExtension() {
+		if (extensions != null) {
+			List<HelloExtension> exts = extensions.getExtensions();
+			for (HelloExtension helloExtension : exts) {
+				if (helloExtension instanceof ServerCertificateTypeExtension) {
+					return (ServerCertificateTypeExtension) helloExtension;
+				}
+			}
+		}
+		return null;
+	}
+
+}

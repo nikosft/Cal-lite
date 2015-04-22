@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2014 Institute for Pervasive Computing, ETH Zurich and others.
+ * Copyright (c) 2014, 2015 Institute for Pervasive Computing, ETH Zurich and others.
  * 
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
@@ -15,7 +15,9 @@
  *    Martin Lanter - architect and re-implementation
  *    Dominique Im Obersteg - parsers and initial implementation
  *    Daniel Pauli - parsers and initial implementation
- *    Kai Hudalla - logging
+ *    Kai Hudalla (Bosch Software Innovations GmbH) - logging
+ *    Kai Hudalla (Bosch Software Innovations GmbH) - include client identity in Requests
+ *                                                    (465073)
  ******************************************************************************/
 package org.eclipse.californium.core.network;
 
@@ -25,7 +27,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
-
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 import org.eclipse.californium.core.Utils;
 import org.eclipse.californium.core.coap.CoAP.Type;
@@ -111,7 +114,8 @@ import org.eclipse.californium.elements.UDPConnector;
  */
 public class CoAPEndpoint implements Endpoint {
 	
-
+	/** the logger. */
+	private final static Logger LOGGER = Logger.getLogger(CoAPEndpoint.class.getCanonicalName());
 	
 	/** The stack of layers that make up the CoAP protocol */
 	private final CoapStack coapstack;
@@ -220,7 +224,6 @@ public class CoAPEndpoint implements Endpoint {
 		
 		c.setReceiveBufferSize(config.getInt(NetworkConfig.Keys.UDP_CONNECTOR_RECEIVE_BUFFER));
 		c.setSendBufferSize(config.getInt(NetworkConfig.Keys.UDP_CONNECTOR_SEND_BUFFER));
-		c.setLogPackets(config.getBoolean(NetworkConfig.Keys.UDP_CONNECTOR_LOG_PACKETS));
 		c.setReceiverPacketSize(config.getInt(NetworkConfig.Keys.UDP_CONNECTOR_DATAGRAM_SIZE));
 		
 		return c;
@@ -232,7 +235,7 @@ public class CoAPEndpoint implements Endpoint {
 	@Override
 	public synchronized void start() throws IOException {
 		if (started) {
-			
+			LOGGER.log(Level.FINE, "Endpoint at " + getAddress().toString() + " is already started");
 			return;
 		}
 		
@@ -240,7 +243,7 @@ public class CoAPEndpoint implements Endpoint {
 			this.coapstack.setDeliverer(new ClientMessageDeliverer());
 		
 		if (this.executor == null) {
-			
+			LOGGER.config("Endpoint "+toString()+" requires an executor to start. Using default single-threaded daemon executor.");
 			
 			final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor(new Utils.DaemonThreadFactory());
 			setExecutor(executor);
@@ -254,7 +257,7 @@ public class CoAPEndpoint implements Endpoint {
 		}
 		
 		try {
-			
+			LOGGER.log(Level.INFO, "Starting endpoint at " + getAddress());
 			
 			started = true;
 			matcher.start();
@@ -289,9 +292,9 @@ public class CoAPEndpoint implements Endpoint {
 	@Override
 	public synchronized void stop() {
 		if (!started) {
-			
+			LOGGER.log(Level.INFO, "Endpoint at " + getAddress() + " is already stopped");
 		} else {
-			
+			LOGGER.log(Level.INFO, "Stopping endpoint at address " + getAddress());
 			started = false;
 			connector.stop();
 			matcher.stop();
@@ -306,7 +309,7 @@ public class CoAPEndpoint implements Endpoint {
 	 */
 	@Override
 	public synchronized void destroy() {
-		
+		LOGGER.log(Level.INFO, "Destroying endpoint at address " + getAddress());
 		if (started)
 			stop();
 		connector.destroy();
@@ -557,7 +560,8 @@ public class CoAPEndpoint implements Endpoint {
 				try {
 					request = parser.parseRequest();
 				} catch (IllegalStateException e) {
-					String log = "message format error caused by " + raw.getInetSocketAddress();
+					StringBuffer log = new StringBuffer("message format error caused by ")
+						.append(raw.getInetSocketAddress());
 					if (!parser.isReply()) {
 						// manually build RST from raw information
 						EmptyMessage rst = new EmptyMessage(Type.RST);
@@ -567,13 +571,16 @@ public class CoAPEndpoint implements Endpoint {
 						for (MessageInterceptor interceptor:interceptors)
 							interceptor.sendEmptyMessage(rst);
 						connector.send(serializer.serialize(rst));
-						log += " and reseted";
+						log.append(" and reset");
 					}
-					
+					if (LOGGER.isLoggable(Level.INFO)) {
+						LOGGER.info(log.toString());
+					}
 					return;
 				}
 				request.setSource(raw.getAddress());
 				request.setSourcePort(raw.getPort());
+				request.setSenderIdentity(raw.getSenderIdentity());
 				
 				/* 
 				 * Logging here causes significant performance loss.
@@ -616,7 +623,7 @@ public class CoAPEndpoint implements Endpoint {
 						response.setRTT(System.currentTimeMillis() - exchange.getTimestamp());
 						coapstack.receiveResponse(exchange, response);
 					} else if (response.getType() != Type.ACK) {
-						
+						LOGGER.fine("Rejecting unmatchable response from " + raw.getInetSocketAddress());
 						reject(response);
 					}
 				}
@@ -640,7 +647,7 @@ public class CoAPEndpoint implements Endpoint {
 				if (!message.isCanceled()) {
 					// CoAP Ping
 					if (message.getType() == Type.CON || message.getType() == Type.NON) {
-						
+						LOGGER.info("Responding to ping by " + raw.getInetSocketAddress());
 						reject(message);
 					} else {
 						Exchange exchange = matcher.receiveEmptyMessage(message);
@@ -651,7 +658,7 @@ public class CoAPEndpoint implements Endpoint {
 					}
 				}
 			} else {
-				
+				LOGGER.finest("Silently ignoring non-CoAP message from " + raw.getInetSocketAddress());
 			}
 		}
 		

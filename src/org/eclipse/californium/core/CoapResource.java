@@ -28,7 +28,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Semaphore;
-
+import java.util.logging.Logger;
 
 import org.eclipse.californium.core.coap.CoAP;
 import org.eclipse.californium.core.coap.CoAP.Code;
@@ -121,7 +121,8 @@ import org.eclipse.californium.core.server.resources.ResourceObserver;
  */
 public  class CoapResource implements Resource {
 
-;
+	/** The logger. */
+	protected final static Logger LOGGER = Logger.getLogger(CoapResource.class.getCanonicalName());
 	
 	/* The attributes of this resource. */
 	private final ResourceAttributes attributes;
@@ -669,9 +670,9 @@ public  class CoapResource implements Resource {
 	@Override
 	public void addObserveRelation(ObserveRelation relation) {
 		if (observeRelations.add(relation)) {
-			
+			LOGGER.info("Replacing observe relation between "+relation.getKey()+" and resource "+getURI());
 		} else {
-			
+			LOGGER.info("Successfully established observe relation between "+relation.getKey()+" and resource "+getURI());
 		}
 		for (ResourceObserver obs:observers)
 			obs.addedObserveRelation(relation);

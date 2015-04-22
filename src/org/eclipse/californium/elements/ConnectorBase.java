@@ -21,7 +21,7 @@ import java.net.InetSocketAddress;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.logging.Level;
-
+import java.util.logging.Logger;
 
 /**
  * ConnectorBase is a partial implementation of a {@link Connector}. It connects
@@ -35,7 +35,8 @@ import java.util.logging.Level;
  */
 public abstract class ConnectorBase implements Connector {
 	
-	
+	/** The Logger. */
+	private final static Logger LOGGER = Logger.getLogger(ConnectorBase.class.toString());
 
 	/** The local address. */
 	private final InetSocketAddress localAddr;
@@ -149,7 +150,7 @@ public abstract class ConnectorBase implements Connector {
 
 		int senderCount = getSenderThreadCount();
 		int receiverCount = getReceiverThreadCount();
-		
+		LOGGER.config(getName()+"-connector starts "+senderCount+" sender threads and "+receiverCount+" receiver threads");
 		
 		senderThread = new Worker(getName()+"-Sender-"+localAddr) {
 				public void work() throws Exception { sendNextMessageOverNetwork(); }
@@ -212,16 +213,19 @@ public abstract class ConnectorBase implements Connector {
 
 		public void run() {
 			try {
-				
+				LOGGER.fine("Starting thread "+getName());
 				while (running) {
 					try {
 						work();
 					} catch (Throwable t) {
-						
+						if (running)
+							LOGGER.log(Level.WARNING, "Exception \""+t+"\" in thread "+getName(), t);
+						else
+							LOGGER.fine("Exception \""+t+"\" stopped thread "+getName() );
 					}
 				}
 			} finally {
-				
+				LOGGER.fine("Thread "+getName()+" has terminated");
 			}
 		}
 

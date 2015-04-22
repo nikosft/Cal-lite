@@ -23,7 +23,7 @@ import java.net.InetSocketAddress;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.concurrent.Executor;
-
+import java.util.logging.Logger;
 
 import org.eclipse.californium.core.coap.CoAP.Code;
 import org.eclipse.californium.core.coap.CoAP.ResponseCode;
@@ -41,7 +41,7 @@ import org.eclipse.californium.core.server.resources.Resource;
  */
 public class ServerMessageDeliverer implements MessageDeliverer {
 
-	
+	private final static Logger LOGGER = Logger.getLogger(ServerMessageDeliverer.class.getCanonicalName());
 
 	/* The root of all resources */
 	private final Resource root;
@@ -81,7 +81,7 @@ public class ServerMessageDeliverer implements MessageDeliverer {
 				resource.handleRequest(exchange);
 			}
 		} else {
-			
+			LOGGER.info("Did not find resource " + path.toString());
 			exchange.sendResponse(new Response(ResponseCode.NOT_FOUND));
 		}
 	}
@@ -109,7 +109,7 @@ public class ServerMessageDeliverer implements MessageDeliverer {
 			
 			if (request.getOptions().getObserve()==0) {
 				// Requests wants to observe and resource allows it :-)
-				
+				LOGGER.finer("Initiate an observe relation between " + request.getSource() + ":" + request.getSourcePort() + " and resource " + resource.getURI());
 				ObservingEndpoint remote = observeManager.findObservingEndpoint(source);
 				ObserveRelation relation = new ObserveRelation(remote, resource, exchange);
 				remote.addObserveRelation(relation);

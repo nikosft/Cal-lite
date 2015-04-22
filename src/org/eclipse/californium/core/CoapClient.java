@@ -25,7 +25,8 @@ import java.util.Collections;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 import org.eclipse.californium.core.coap.BlockOption;
 import org.eclipse.californium.core.coap.CoAP;
@@ -44,6 +45,8 @@ import org.eclipse.californium.core.network.config.NetworkConfig;
  */
 public class CoapClient {
 
+	/** The logger. */
+	private static final Logger LOGGER = Logger.getLogger(CoapClient.class.getCanonicalName());
 	
 	/** The timeout. */
 	private long timeout = NetworkConfig.getStandard().getLong(NetworkConfig.Keys.ACK_TIMEOUT);
@@ -159,7 +162,7 @@ public class CoapClient {
 		// activates the executor so that this user thread starts deterministically
 		executor.execute(new Runnable() {
 			public void run() {
-				
+				LOGGER.config("Using a SingleThreadExecutor for the CoapClient");
 			};
 		});
 		
@@ -200,9 +203,9 @@ public class CoapClient {
 		if (!endpoint.isStarted()) {
 			try {
 				endpoint.start();
-				
+				LOGGER.log(Level.INFO, "Started set client endpoint " + endpoint.getAddress());
 			} catch (IOException e) {
-				
+				LOGGER.log(Level.SEVERE, "Could not set and start client endpoint", e);
 			}
 			
 		}
@@ -969,7 +972,7 @@ public class CoapClient {
 					try {
 						deliver(response);
 					} catch (Throwable t) {
-						
+						LOGGER.log(Level.WARNING, "Exception while handling response", t);
 					}}});
 		}
 		
@@ -998,7 +1001,7 @@ public class CoapClient {
 					try {
 						handler.onError(); 
 					} catch (Throwable t) {
-						
+						LOGGER.log(Level.WARNING, "Exception while handling failure", t);
 					}}});
 		}
 	}
@@ -1038,7 +1041,7 @@ public class CoapClient {
 					relation.prepareReregistration(response, 2000);
 					handler.onLoad(response);
 				} else {
-					
+					LOGGER.finer("Dropping old notification: "+response.advanced());
 					return;
 				}
 			}

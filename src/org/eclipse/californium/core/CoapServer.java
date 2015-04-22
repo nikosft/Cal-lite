@@ -26,7 +26,8 @@ import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
-
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 import org.eclipse.californium.core.coap.CoAP.ResponseCode;
 import org.eclipse.californium.core.network.CoAPEndpoint;
@@ -88,6 +89,8 @@ import org.eclipse.californium.core.server.resources.Resource;
  **/
 public class CoapServer implements ServerInterface {
 
+	/** The logger. */
+	private final static Logger LOGGER = Logger.getLogger(CoapServer.class.getCanonicalName());
 
 	/** The root resource. */
 	private final Resource root;
@@ -174,11 +177,12 @@ public class CoapServer implements ServerInterface {
 	@Override
 	public void start() {
 		
-		
+		LOGGER.info("Starting server");
 		
 		if (endpoints.isEmpty()) {
 			// servers should bind to the configured port (while clients should use an ephemeral port through the default endpoint)
 			int port = config.getInt(NetworkConfig.Keys.COAP_PORT);
+			LOGGER.info("No endpoints have been defined for server, setting up server endpoint on default port " + port);
 			addEndpoint(new CoAPEndpoint(port, this.config));
 		}
 		
@@ -189,6 +193,7 @@ public class CoapServer implements ServerInterface {
 				// only reached on success
 				++started;
 			} catch (IOException e) {
+				LOGGER.severe(e.getMessage() + " at " + ep.getAddress());
 			}
 		}
 		if (started==0) {
@@ -202,6 +207,7 @@ public class CoapServer implements ServerInterface {
 	 */
 	@Override
 	public void stop() {
+		LOGGER.info("Stopping server");
 		for (Endpoint ep:endpoints)
 			ep.stop();
 	}
@@ -211,14 +217,16 @@ public class CoapServer implements ServerInterface {
 	 */
 	@Override
 	public void destroy() {
+		LOGGER.info("Destroy server");
 		for (Endpoint ep:endpoints)
 			ep.destroy();
 		executor.shutdown(); // cannot be started again
 		try {
 			boolean succ = executor.awaitTermination(5, TimeUnit.SECONDS);
-			
+			if (!succ)
+				LOGGER.warning("Stack executor did not shutdown in time");
 		} catch (InterruptedException e) {
-			
+			LOGGER.log(Level.WARNING, "Exception while terminating stack executor", e);
 		}
 	}
 	

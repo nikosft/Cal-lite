@@ -6,4 +6,5 @@ Things that have been removed:
 
 -Any maven dependency
 -Any plugin support
--Logging
+
+Visit https://github.com/nikosft/CoAP-examples for a list of examples on how to use it

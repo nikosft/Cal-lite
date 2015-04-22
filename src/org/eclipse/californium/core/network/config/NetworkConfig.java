@@ -27,7 +27,8 @@ import java.io.InputStream;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Properties;
-
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 
 /**
@@ -35,7 +36,8 @@ import java.util.Properties;
  */
 public class NetworkConfig {
 
-
+	/** The logger. */
+	private static final Logger LOGGER = Logger.getLogger(NetworkConfig.class.getCanonicalName());
 	
 	/** The default name for the configuration. */
 	public static final String DEFAULT = "Californium.properties";
@@ -90,7 +92,6 @@ public class NetworkConfig {
 		public static final String UDP_CONNECTOR_RECEIVE_BUFFER = "UDP_CONNECTOR_RECEIVE_BUFFER";
 		public static final String UDP_CONNECTOR_SEND_BUFFER = "UDP_CONNECTOR_SEND_BUFFER";
 		public static final String UDP_CONNECTOR_OUT_CAPACITY = "UDP_CONNECTOR_OUT_CAPACITY";
-		public static final String UDP_CONNECTOR_LOG_PACKETS = "UDP_CONNECTOR_LOG_PACKETS";
 		
 		public static final String DEDUPLICATOR = "DEDUPLICATOR";
 		public static final String DEDUPLICATOR_MARK_AND_SWEEP = "DEDUPLICATOR_MARK_AND_SWEEP";
@@ -141,7 +142,7 @@ public class NetworkConfig {
 	 * @return the configuration
 	 */
 	public static NetworkConfig createStandardWithoutFile() {
-		
+		LOGGER.info("Creating standard network configuration properties without a file");
 		return standard = new NetworkConfig();
 	}
 	
@@ -156,18 +157,18 @@ public class NetworkConfig {
 	public static NetworkConfig createStandardWithFile(File file) {
 		standard = new NetworkConfig();
 		if (file.exists()) {
-			
+			LOGGER.info("Loading standard properties from file "+file);
 			try {
 				standard.load(file);
 			} catch (IOException e) {
-				
+				LOGGER.log(Level.WARNING, "Error while loading properties from "+file.getAbsolutePath(), e);
 			}
 		} else {
-			
+			LOGGER.info("Storing standard properties in file "+file);
 			try {
 				standard.store(file);
 			} catch (IOException e) {
-				
+				LOGGER.log(Level.WARNING, "Error while storing properties to "+file.getAbsolutePath(), e);
 			}
 		}
 		return standard;
@@ -238,10 +239,10 @@ public class NetworkConfig {
 			try {
 				return Integer.parseInt(value);
 			} catch (NumberFormatException e) {
-				
+				LOGGER.log(Level.WARNING, "Could not convert property \"" + key + "\" with value \"" + value + "\" to integer", e);
 			}
 		} else {
-			
+			LOGGER.warning("Property \"" + key + "\" is undefined");
 		}
 		return 0;
 	}
@@ -258,11 +259,11 @@ public class NetworkConfig {
 			try {
 				return Long.parseLong(value);
 			} catch (NumberFormatException e) {
-				
+				LOGGER.log(Level.WARNING, "Could not convert property \"" + key + "\" with value \"" + value + "\" to long", e);
 				return 0;
 			}
 		} else {
-			
+			LOGGER.warning("Property \"" + key + "\" is undefined");
 		}
 		return 0;
 	}
@@ -279,11 +280,11 @@ public class NetworkConfig {
 			try {
 				return Float.parseFloat(value);
 			} catch (NumberFormatException e) {
-				
+				LOGGER.log(Level.WARNING, "Could not convert property \"" + key + "\" with value \"" + value + "\" to float", e);
 				return 0;
 			}
 		} else {
-			
+			LOGGER.warning("Property \"" + key + "\" is undefined");
 		}
 		return 0;
 	}
@@ -300,11 +301,11 @@ public class NetworkConfig {
 			try {
 				return Double.parseDouble(value);
 			} catch (NumberFormatException e) {
-				
+				LOGGER.log(Level.WARNING, "Could not convert property \"" + key + "\" with value \"" + value + "\" to double", e);
 				return 0;
 			}
 		} else {
-			
+			LOGGER.warning("Property \"" + key + "\" is undefined");
 		}
 		return 0;
 	}
@@ -321,11 +322,11 @@ public class NetworkConfig {
 			try {
 				return Boolean.parseBoolean(value);
 			} catch (NumberFormatException e) {
-				
+				LOGGER.log(Level.WARNING, "Could not convert property \"" + key + "\" with value \"" + value + "\" to boolean", e);
 				return false;
 			}
 		} else {
-			
+			LOGGER.warning("Property \"" + key + "\" is undefined");
 		}
 		return false;
 	}

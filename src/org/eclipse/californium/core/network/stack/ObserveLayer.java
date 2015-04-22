@@ -51,13 +51,13 @@ public class ObserveLayer extends AbstractLayer {
 			if (exchange.getRequest().isAcknowledged() || exchange.getRequest().getType()==Type.NON) {
 				// Transmit errors as CON
 				if (!ResponseCode.isSuccess(response.getCode())) {
-					
+					LOGGER.fine("Response has error code "+response.getCode()+" and must be sent as CON");
 					response.setType(Type.CON);
 					relation.cancel();
 				} else {
 					// Make sure that every now and than a CON is mixed within
 					if (relation.check()) {
-						
+						LOGGER.fine("The observe relation check requires the notification to be sent as CON");
 						response.setType(Type.CON);
 					} else {
 						// By default use NON, but do not override resource decision
@@ -96,7 +96,7 @@ public class ObserveLayer extends AbstractLayer {
 			synchronized (exchange) {
 				Response current = relation.getCurrentControlNotification();
 				if (current != null && isInTransit(current)) {
-					
+					LOGGER.fine("A former notification is still in transit. Postpone " + response);
 					// use the same MID
 					response.setMID(current.getMID());
 					relation.setNextControlNotification(response);
@@ -129,7 +129,7 @@ public class ObserveLayer extends AbstractLayer {
 	public void receiveResponse(Exchange exchange, Response response) {
 		if (response.getOptions().hasObserve() && exchange.getRequest().isCanceled()) {
 			// The request was canceled and we no longer want notifications
-			
+			LOGGER.finer("ObserveLayer rejecting notification for canceled Exchange");
 			EmptyMessage rst = EmptyMessage.newRST(response);
 			sendEmptyMessage(exchange, rst);
 			// Matcher sets exchange as complete when RST is sent
@@ -178,7 +178,7 @@ public class ObserveLayer extends AbstractLayer {
 				relation.setCurrentControlNotification(next); // next may be null
 				relation.setNextControlNotification(null);
 				if (next != null) {
-					
+					LOGGER.fine("Notification has been acknowledged, send the next one");
 					// this is not a self replacement, hence a new MID
 					next.setMID(Message.NONE);
 					// Create a new task for sending next response so that we can leave the sync-block
@@ -197,7 +197,7 @@ public class ObserveLayer extends AbstractLayer {
 				ObserveRelation relation = exchange.getRelation();
 				final Response next = relation.getNextControlNotification();
 				if (next != null) {
-					
+					LOGGER.fine("The notification has timed out and there is a fresher notification for the retransmission");
 					// Cancel the original retransmission and send the fresh notification here
 					response.cancel();
 					// use the same MID
@@ -222,7 +222,7 @@ public class ObserveLayer extends AbstractLayer {
 		@Override
 		public void onTimeout() {
 			ObserveRelation relation = exchange.getRelation();
-			
+			LOGGER.info("Notification " + relation.getExchange().getRequest().getTokenString() + " timed out. Cancel all relations with source " + relation.getSource());
 			relation.cancelAll();
 		}
 		

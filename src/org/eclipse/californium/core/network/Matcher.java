@@ -25,7 +25,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 import org.eclipse.californium.core.coap.CoAP.Type;
 import org.eclipse.californium.core.coap.EmptyMessage;
@@ -43,7 +44,7 @@ import org.eclipse.californium.core.observe.ObserveRelation;
 
 public class Matcher {
 
-
+	private final static Logger LOGGER = Logger.getLogger(Matcher.class.getCanonicalName());
 	
 	private boolean started;
 	private ExchangeObserver exchangeObserver = new ExchangeObserverImpl();
@@ -64,7 +65,7 @@ public class Matcher {
 	// Idea: Only store acks/rsts and not the whole exchange. Responses should be sent CON.
 	
 	/** Health status output */
-
+	private Level healthStatusLevel;
 	private int healthStatusInterval; // seconds
 	
 	public Matcher(NetworkConfig config) {
@@ -80,7 +81,7 @@ public class Matcher {
 			currendMID = new AtomicInteger(new Random().nextInt(1<<16));
 		else currendMID = new AtomicInteger(0);
 		
-
+		healthStatusLevel = Level.parse(config.getString(NetworkConfig.Keys.HEALTH_STATUS_PRINT_LEVEL));
 		healthStatusInterval = config.getInt(NetworkConfig.Keys.HEALTH_STATUS_INTERVAL);
 	}
 	
@@ -91,7 +92,15 @@ public class Matcher {
 			throw new IllegalStateException("Matcher has no executor to schedule exchange removal");
 		deduplicator.start();
 		
-		
+		// this is a useful health metric that could later be exported to some kind of monitoring interface
+		if (LOGGER.isLoggable(healthStatusLevel)) {
+			executor.scheduleAtFixedRate(new Runnable() {
+				@Override
+				public void run() {
+					LOGGER.log(healthStatusLevel, "Matcher state: " + exchangesByMID.size() + " exchangesByMID, " + exchangesByToken.size() + " exchangesByToken, " + ongoingExchanges.size() + " ongoingExchanges");
+				}
+			}, healthStatusInterval, healthStatusInterval, TimeUnit.SECONDS);
+		}
 	}
 	
 	public synchronized void stop() {
@@ -124,7 +133,7 @@ public class Matcher {
 		
 		exchange.setObserver(exchangeObserver);
 		
-		
+		LOGGER.fine("Stored open request by "+idByMID+", "+idByTok);
 		
 		exchangesByMID.put(idByMID, exchange);
 		exchangesByToken.put(idByTok, exchange);
@@ -163,10 +172,10 @@ public class Matcher {
 					response.getDestination().getAddress(), response.getDestinationPort());
 			if (exchange.getResponseBlockStatus()!=null && !response.getOptions().hasObserve()) {
 				// Remember ongoing blockwise GET requests
-				
+				LOGGER.fine("Ongoing Block2 started, storing "+idByUri + "\nOngoing " + request + "\nOngoing " + response);
 				ongoingExchanges.put(idByUri, exchange);
 			} else {
-				
+				LOGGER.fine("Ongoing Block2 completed, cleaning up "+idByUri + "\nOngoing " + request + "\nOngoing " + response);
 				ongoingExchanges.remove(idByUri);
 			}
 		}
@@ -197,7 +206,8 @@ public class Matcher {
 		/*
 		 * We do not expect any response for an empty message
 		 */
-	
+		if (message.getMID() == Message.NONE)
+			LOGGER.severe("Empy message "+ message+" has no MID // debugging");
 	}
 
 	public Exchange receiveRequest(Request request) {
@@ -230,7 +240,7 @@ public class Matcher {
 				return exchange;
 				
 			} else {
-				
+				LOGGER.info("Message is a duplicate, ignore: "+request);
 				request.setDuplicate(true);
 				return previous;
 			}
@@ -240,13 +250,13 @@ public class Matcher {
 			KeyUri idByUri = new KeyUri(request.getURI(),
 					request.getSource().getAddress(), request.getSourcePort());
 			
-			
+			LOGGER.fine("Lookup ongoing exchange for "+idByUri);
 			Exchange ongoing = ongoingExchanges.get(idByUri);
 			if (ongoing != null) {
 				
 				Exchange prev = deduplicator.findPrevious(idByMID, ongoing);
 				if (prev != null) {
-					
+					LOGGER.info("Message is a duplicate: "+request);
 					request.setDuplicate(true);
 				}
 				return ongoing;
@@ -263,13 +273,13 @@ public class Matcher {
 				
 				Exchange exchange = new Exchange(request, Origin.REMOTE);
 				Exchange previous = deduplicator.findPrevious(idByMID, exchange);
-				
+				LOGGER.fine("New ongoing exchange for remote Block1 request with key "+idByUri);
 				if (previous == null) {
 					exchange.setObserver(exchangeObserver);
 					ongoingExchanges.put(idByUri, exchange);
 					return exchange;
 				} else {
-					
+					LOGGER.info("Message is a duplicate: "+request);
 					request.setDuplicate(true);
 					return previous;
 				}
@@ -291,7 +301,7 @@ public class Matcher {
 		
 		KeyToken idByTok = new KeyToken(response.getToken(), 
 				response.getSource().getAddress(), response.getSourcePort());
-
+		
 		Exchange exchange = exchangesByToken.get(idByTok);
 		
 		if (exchange != null) {
@@ -299,16 +309,16 @@ public class Matcher {
 			
 			Exchange prev = deduplicator.findPrevious(idByMID, exchange);
 			if (prev != null) { // (and thus it holds: prev == exchange)
-				
+				LOGGER.fine("Duplicate response "+response);
 				response.setDuplicate(true);
 			} else {
-				
+				LOGGER.fine("Exchange got reply: Cleaning up "+idByMID);
 				exchangesByMID.remove(idByMID);
 			}
 			
 			if (response.getType() == Type.ACK && exchange.getCurrentRequest().getMID() != response.getMID()) {
 				// The token matches but not the MID. This is a response for an older exchange
-				
+				LOGGER.warning("Token matches but not MID: Expected "+exchange.getCurrentRequest().getMID()+" but was "+response.getMID());
 				// ignore response
 				return null;
 			} else {
@@ -338,11 +348,11 @@ public class Matcher {
 		Exchange exchange = exchangesByMID.get(idByMID);
 		
 		if (exchange != null) {
-			
+			LOGGER.fine("Exchange got reply: Cleaning up "+idByMID);
 			exchangesByMID.remove(idByMID);
 			return exchange;
 		} else {
-			
+			LOGGER.info("Matcher received empty message that does not match any exchange: "+message);
 			// ignore message;
 			return null;
 		} // else, this is an ACK for an unknown exchange and we ignore it
@@ -356,7 +366,7 @@ public class Matcher {
 	}
 	
 	private void removeNotificatoinsOf(ObserveRelation relation) {
-		
+		LOGGER.fine("Remove all remaining NON-notifications of observe relation");
 		for (Iterator<Response> iterator = relation.getNotificationIterator(); iterator.hasNext();) {
 			Response previous = iterator.next();
 			KeyMID idByMID = new KeyMID(previous.getMID(), 

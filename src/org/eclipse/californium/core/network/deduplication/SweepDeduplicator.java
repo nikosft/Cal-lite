@@ -24,7 +24,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
-
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 import org.eclipse.californium.core.network.Exchange;
 import org.eclipse.californium.core.network.Exchange.KeyMID;
@@ -38,7 +39,8 @@ import org.eclipse.californium.core.network.config.NetworkConfig;
  */
 public class SweepDeduplicator implements Deduplicator {
 
-	
+	/** The logger. */
+	private final static Logger LOGGER = Logger.getLogger(SweepDeduplicator.class.getCanonicalName());
 	
 	/** The hash map with all incoming messages. */
 	private ConcurrentHashMap<KeyMID, Exchange> incommingMessages;
@@ -107,17 +109,17 @@ public class SweepDeduplicator implements Deduplicator {
 		@Override
 		public void run() {
 			try {
-				
+				LOGGER.finest("Start Mark-And-Sweep with "+incommingMessages.size()+" entries");
 				sweep();
 				
 			} catch (Throwable t) {
-				
+				LOGGER.log(Level.WARNING, "Exception in Mark-and-Sweep algorithm", t);
 			
 			} finally {
 				try {
 					schedule();
 				} catch (Throwable t) {
-					
+					LOGGER.log(Level.WARNING, "Exception while scheduling Mark-and-Sweep algorithm", t);
 				}
 			}
 		}
@@ -135,7 +137,7 @@ public class SweepDeduplicator implements Deduplicator {
 				Exchange exchange = entry.getValue();
 				if (exchange.getTimestamp() < oldestAllowed) {
 					//TODO check if exchange of observe relationship is periodically created and sweeped
-					
+					LOGGER.finer("Mark-And-Sweep removes "+entry.getKey());
 					incommingMessages.remove(entry.getKey());
 				}
 			}

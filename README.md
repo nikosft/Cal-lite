@@ -4,7 +4,7 @@ NetBeans, or by using javac.
 
 Things that have been removed:
 
--Any maven dependency
--Any plugin support
+* Any maven dependency
+* Any plugin support
 
 Visit https://github.com/nikosft/CoAP-examples for a list of examples on how to use it

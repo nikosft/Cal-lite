@@ -49,8 +49,8 @@ public class CoapClient {
 	private static final Logger LOGGER = Logger.getLogger(CoapClient.class.getCanonicalName());
 	
 	/** The timeout. */
-	private long timeout = NetworkConfig.getStandard().getLong(NetworkConfig.Keys.ACK_TIMEOUT);
-	
+	//private long timeout = NetworkConfig.getStandard().getLong(NetworkConfig.Keys.ACK_TIMEOUT);
+	private long timeout =2000;
 	/** The destination URI */
 	private String uri;
 	

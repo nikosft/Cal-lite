@@ -21,8 +21,9 @@ import java.security.NoSuchAlgorithmException;
 import java.security.Principal;
 import java.security.PublicKey;
 import java.util.Arrays;
+import org.eclipse.californium.scandium.util.ByteArrayUtils;
 
-import javax.xml.bind.DatatypeConverter;
+//import javax.xml.bind.DatatypeConverter;
 
 /**
  * A principal representing an authenticated peer's <em>RawPublicKey</em>.
@@ -55,7 +56,7 @@ public class RawPublicKeyIdentity implements Principal {
 			MessageDigest md = MessageDigest.getInstance("SHA-256");
 			md.update(subjectPublicKeyInfo);
 			byte[] digest = md.digest();
-			String base64urlDigest = DatatypeConverter.printBase64Binary(digest);
+			String base64urlDigest = ByteArrayUtils.toHexString(digest);
 			// difference between canonical base64 and base64url is
 			// two characters in the encoding alphabet
 			// and abstinence from padding

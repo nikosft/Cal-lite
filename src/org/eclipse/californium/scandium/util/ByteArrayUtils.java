@@ -164,6 +164,89 @@ public class ByteArrayUtils {
 			return "--";
 		}
 	}
+        
+        /**
+	 * Takes a byte array and returns it Base64 representation.
+	 * 
+	 * @param src
+	 *            the byte array.
+	 * @return the Base64 representation.
+	 */
+	public static String toBase64String(byte[] src) {
+            int MIMELINEMAX = 76;
+            byte[] CRLF = new byte[] {'\r', '\n'};
+            char[] toBase64 = {
+            'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',
+            'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
+            'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm',
+            'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
+            '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '+', '/'
+            };
+            
+            int linemax = MIMELINEMAX;
+            byte[] newline = CRLF;
+            boolean doPadding = true;
+            
+            int len = 0;
+            int  srclen = src.length;
+            len = 4 * ((srclen + 2) / 3);
+            //line seperators
+            len += (len - 1) / linemax * newline.length;            
+            byte[] dst = new byte[len];
+            char[] base64 = toBase64;
+            int off = 0;
+            int end = src.length;
+            int sp = off;
+            int slen = (end - off) / 3 * 3;
+            int sl = off + slen;
+            if (linemax > 0 && slen  > linemax / 4 * 3)
+                slen = linemax / 4 * 3;
+            int dp = 0;
+            while (sp < sl) {
+                int sl0 = Math.min(sp + slen, sl);
+                for (int sp0 = sp, dp0 = dp ; sp0 < sl0; ) {
+                    int bits = (src[sp0++] & 0xff) << 16 |
+                               (src[sp0++] & 0xff) <<  8 |
+                               (src[sp0++] & 0xff);
+                    dst[dp0++] = (byte)base64[(bits >>> 18) & 0x3f];
+                    dst[dp0++] = (byte)base64[(bits >>> 12) & 0x3f];
+                    dst[dp0++] = (byte)base64[(bits >>> 6)  & 0x3f];
+                    dst[dp0++] = (byte)base64[bits & 0x3f];
+                }
+                int dlen = (sl0 - sp) / 3 * 4;
+                dp += dlen;
+                sp = sl0;
+                if (dlen == linemax && sp < end) {
+                    for (byte b : newline){
+                        dst[dp++] = b;
+                    }
+                }
+            }
+            if (sp < end) {               // 1 or 2 leftover bytes
+                int b0 = src[sp++] & 0xff;
+                dst[dp++] = (byte)base64[b0 >> 2];
+                if (sp == end) {
+                    dst[dp++] = (byte)base64[(b0 << 4) & 0x3f];
+                    if (doPadding) {
+                        dst[dp++] = '=';
+                        dst[dp++] = '=';
+                    }
+                } else {
+                    int b1 = src[sp++] & 0xff;
+                    dst[dp++] = (byte)base64[(b0 << 4) & 0x3f | (b1 >> 4)];
+                    dst[dp++] = (byte)base64[(b1 << 2) & 0x3f];
+                    if (doPadding) {
+                        dst[dp++] = '=';
+                    }
+                }
+            }
+            int ret =  dp;
+            byte[] encoded;
+            if (ret != dst.length)
+                 encoded = Arrays.copyOf(dst, ret);
+            encoded = dst;
+            return new String(encoded, 0, 0, encoded.length);
+	}
 
 	/**
 	 * Takes a HEX stream and returns the corresponding byte array.

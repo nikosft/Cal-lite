@@ -56,7 +56,7 @@ public class RawPublicKeyIdentity implements Principal {
 			MessageDigest md = MessageDigest.getInstance("SHA-256");
 			md.update(subjectPublicKeyInfo);
 			byte[] digest = md.digest();
-			String base64urlDigest = ByteArrayUtils.toHexString(digest);
+			String base64urlDigest = ByteArrayUtils.toBase64String(digest);
 			// difference between canonical base64 and base64url is
 			// two characters in the encoding alphabet
 			// and abstinence from padding

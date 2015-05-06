@@ -14,17 +14,20 @@
  *    Matthias Kovatsch - creator and main architect
  *    Stefan Jucker - DTLS implementation
  *    Kai Hudalla (Bosch Software Innovations GmbH) - fix bug 464383
+ *    Kai Hudalla (Bosch Software Innovations GmbH) - replace custom HMAC implementation
+ *                                                    with standard algorithm
+ *    Kai Hudalla (Bosch Software Innovations GmbH) - retrieve security parameters from cipher suite only
  ******************************************************************************/
 package org.eclipse.californium.scandium.dtls;
 
 import java.net.InetSocketAddress;
+import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.security.cert.Certificate;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
@@ -35,6 +38,7 @@ import java.util.Map;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+import javax.crypto.Mac;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
@@ -62,21 +66,13 @@ public abstract class Handshaker {
 
 	// Static members /////////////////////////////////////////////////
 
-	private final static int MASTER_SECRET_LABEL = 1;
+	public final static int MASTER_SECRET_LABEL = 1;
 
-	private final static int KEY_EXPANSION_LABEL = 2;
+	public final static int KEY_EXPANSION_LABEL = 2;
 
 	public final static int CLIENT_FINISHED_LABEL = 3;
 
 	public final static int SERVER_FINISHED_LABEL = 4;
-
-	public final static int TEST_LABEL = 5;
-
-	public final static int TEST_LABEL_2 = 6;
-
-	public final static int TEST_LABEL_3 = 7;
-	
-	
 
 	// Members ////////////////////////////////////////////////////////
 
@@ -281,8 +277,8 @@ public abstract class Handshaker {
 	 * @return the handshake messages that need to be sent to the peer in
 	 *            response to the record received or <code>null</code> if
 	 *            the received record does not require a response to be sent
-	 * @throws HandshakeException
-	 *             if the handshake cannot be completed successfully
+	 * @throws HandshakeException if the record's plaintext fragment cannot be parsed into
+	 *            a handshake message or cannot be processed properly
 	 */
 	public final DTLSFlight processMessage(Record message) throws HandshakeException {
 		DTLSFlight nextFlight = null;
@@ -290,9 +286,19 @@ public abstract class Handshaker {
 		// before MAC validation based on the record's sequence numbers
 		// see http://tools.ietf.org/html/rfc6347#section-4.1.2.6
 		if (!session.isDuplicate(message.getSequenceNumber())) {
-			message.setSession(session);
-			nextFlight = doProcessMessage(message);
-			session.markRecordAsRead(message.getEpoch(), message.getSequenceNumber());
+			try {
+				message.setSession(session);
+				nextFlight = doProcessMessage(message);
+				session.markRecordAsRead(message.getEpoch(), message.getSequenceNumber());
+			} catch (GeneralSecurityException e) {
+				LOGGER.log(Level.WARNING,
+						String.format(
+								"Cannot process handshake message from peer [%s] due to [%s]",
+								getSession().getPeer(), e.getMessage()),
+						e);
+				AlertMessage alert = new AlertMessage(AlertLevel.FATAL, AlertDescription.INTERNAL_ERROR);
+				throw new HandshakeException("Cannot process handshake message", alert);
+			}
 		} else {
 			LOGGER.log(Level.FINER, "Discarding duplicate HANDSHAKE message received from peer [{0}]:\n{1}",
 					new Object[]{getPeerAddress(), message});
@@ -305,15 +311,17 @@ public abstract class Handshaker {
 	 * the course of an ongoing handshake.
 	 * 
 	 * This method does not do anything. Concrete handshaker implementations should
-	 * override this method in order to do prepare the response to the received
+	 * override this method in order to prepare the response to the received
 	 * record.
 	 * 
 	 * @param record the record received from the peer
 	 * @return the handshake messages to send to the peer in response to the
 	 *            received record
-	 * @throws HandshakeException if the handshake cannot be completed successfully
+	 * @throws HandshakeException if the record's plaintext fragment cannot be parsed into
+	 *            a handshake message or cannot be processed properly
+	 * @throws GeneralSecurityException if the record's ciphertext fragment cannot be decrypted
 	 */
-	protected DTLSFlight doProcessMessage(Record record) throws HandshakeException {
+	protected DTLSFlight doProcessMessage(Record record) throws HandshakeException, GeneralSecurityException {
 		return null;
 	}
 
@@ -325,8 +333,10 @@ public abstract class Handshaker {
 	 * handshake.
 	 * 
 	 * @return the handshake message to start off the handshake protocol.
+	 * @throws HandshakeException if the message cannot be created using the
+	 *            session's current security parameters
 	 */
-	public abstract DTLSFlight getStartHandshakeMessage();
+	public abstract DTLSFlight getStartHandshakeMessage() throws HandshakeException;
 
 	// Methods ////////////////////////////////////////////////////////
 
@@ -376,9 +386,9 @@ public abstract class Handshaker {
 			cipherSuite = session.getCipherSuite();
 		}
 
-		int macKeyLength = cipherSuite.getBulkCipher().getMacKeyLength();
-		int encKeyLength = cipherSuite.getBulkCipher().getEncKeyLength();
-		int fixedIvLength = cipherSuite.getBulkCipher().getFixedIvLength();
+		int macKeyLength = cipherSuite.getMacKeyLength();
+		int encKeyLength = cipherSuite.getEncKeyLength();
+		int fixedIvLength = cipherSuite.getFixedIvLength();
 
 		clientWriteMACKey = new SecretKeySpec(data, 0, macKeyLength, "Mac");
 		serverWriteMACKey = new SecretKeySpec(data, macKeyLength, macKeyLength, "Mac");
@@ -438,204 +448,95 @@ public abstract class Handshaker {
 		return premasterSecret;
 	}
 
+	static byte[] doPRF(byte[] secret, byte[] label, byte[] seed, int length) {
+		try {
+			Mac hmac = Mac.getInstance("HmacSHA256");
+			hmac.init(new SecretKeySpec(secret, "MAC"));
+			return doExpansion(hmac, ByteArrayUtils.concatenate(label, seed), length);
+		} catch (GeneralSecurityException e) {
+			LOGGER.log(Level.SEVERE, "Message digest algorithm not available", e);
+			return null;
+		}
+		
+	}
+	
 	/**
 	 * Does the Pseudorandom function as defined in <a
 	 * href="http://tools.ietf.org/html/rfc5246#section-5">RFC 5246</a>.
 	 * 
-	 * @param secret
-	 *            the secret
-	 * @param labelId
-	 *            the label
-	 * @param seed
-	 *            the seed
-	 * @return the byte[]
+	 * @param secret the secret to use for the secure hash function
+	 * @param labelId the label to use for creating the original data
+	 * @param seed the seed to use for creating the original data
+	 * @return the expanded data
 	 */
-	public static final byte[] doPRF(byte[] secret, int labelId, byte[] seed) {
-		try {
-			MessageDigest md = MessageDigest.getInstance(MESSAGE_DIGEST_ALGORITHM_NAME);
-
+	static final byte[] doPRF(byte[] secret, int labelId, byte[] seed) {
+		int length;
 			String label;
 			switch (labelId) {
 			case MASTER_SECRET_LABEL:
 				// The master secret is always 48 bytes long, see
 				// http://tools.ietf.org/html/rfc5246#section-8.1
 				label = "master secret";
-				return doExpansion(md, secret, ByteArrayUtils.concatenate(label.getBytes(), seed), 48);
-
+			length = 48;
+			break;
 			case KEY_EXPANSION_LABEL:
 				// The most key material required is 128 bytes, see
 				// http://tools.ietf.org/html/rfc5246#section-6.3
 				label = "key expansion";
-				return doExpansion(md, secret, ByteArrayUtils.concatenate(label.getBytes(), seed), 128);
+			length = 128;
+			break;
 
 			case CLIENT_FINISHED_LABEL:
 				// The verify data is always 12 bytes long, see
 				// http://tools.ietf.org/html/rfc5246#section-7.4.9
 				label = "client finished";
-				return doExpansion(md, secret, ByteArrayUtils.concatenate(label.getBytes(), seed), 12);
+			length = 12;
+			break;
 
 			case SERVER_FINISHED_LABEL:
 				// The verify data is always 12 bytes long, see
 				// http://tools.ietf.org/html/rfc5246#section-7.4.9
 				label = "server finished";
-				return doExpansion(md, secret, ByteArrayUtils.concatenate(label.getBytes(), seed), 12);
-
-			case TEST_LABEL:
-				// http://www.ietf.org/mail-archive/web/tls/current/msg03416.html
-				label = "test label";
-				return doExpansion(md, secret, ByteArrayUtils.concatenate(label.getBytes(), seed), 100);
-
-			case TEST_LABEL_2:
-				// http://www.ietf.org/mail-archive/web/tls/current/msg03416.html
-				label = "test label";
-				md = MessageDigest.getInstance("SHA-512");
-				return doExpansion(md, secret, ByteArrayUtils.concatenate(label.getBytes(), seed), 196);
-
-			case TEST_LABEL_3:
-				// http://www.ietf.org/mail-archive/web/tls/current/msg03416.html
-				label = "test label";
-				md = MessageDigest.getInstance("SHA-384");
-				return doExpansion(md, secret, ByteArrayUtils.concatenate(label.getBytes(), seed), 148);
+			length = 12;
+			break;
 
 			default:
-				LOGGER.severe("Unknwon label: " + labelId);
+			LOGGER.log(Level.SEVERE, "Unknown label: {0}", labelId);
 				return null;
 			}
-		} catch (NoSuchAlgorithmException e) {
-			LOGGER.log(Level.SEVERE,"Message digest algorithm not available.",e);
-			return null;
-		}
+		return doPRF(secret, label.getBytes(), seed, length);
 	}
 
 	/**
 	 * Performs the secret expansion as described in <a
 	 * href="http://tools.ietf.org/html/rfc5246#section-5">RFC 5246</a>.
 	 * 
-	 * @param md
-	 *            the cryptographic hash function.
-	 * @param secret
-	 *            the secret.
+	 * @param hmac
+	 *            the cryptographic hash function to use for expansion
 	 * @param data
-	 *            the data.
+	 *            the data to expand
 	 * @param length
-	 *            the length of the expansion in <tt>bytes</tt>.
-	 * @return the expanded array with given length.
+	 *            the length to expand the data to in <tt>bytes</tt>
+	 * @return the expanded data
 	 */
-	protected static final byte[] doExpansion(MessageDigest md, byte[] secret, byte[] data, int length) {
+	static final byte[] doExpansion(Mac hmac, byte[] data, int length) {
 		/*
 		 * P_hash(secret, seed) = HMAC_hash(secret, A(1) + seed) +
 		 * HMAC_hash(secret, A(2) + seed) + HMAC_hash(secret, A(3) + seed) + ...
 		 * where + indicates concatenation. A() is defined as: A(0) = seed, A(i)
 		 * = HMAC_hash(secret, A(i-1))
 		 */
-		double hashLength = 32;
-		if (md.getAlgorithm().equals("SHA-1")) {
-			hashLength = 20;
-		} else if (md.getAlgorithm().equals("SHA-384")) {
-			hashLength = 48;
-		}
 
-		int iterations = (int) Math.ceil(length / hashLength);
+		int iterations = (int) Math.ceil(length / (double) hmac.getMacLength());
 		byte[] expansion = new byte[0];
 
 		byte[] A = data;
 		for (int i = 0; i < iterations; i++) {
-			A = doHMAC(md, secret, A);
-			expansion = ByteArrayUtils.concatenate(expansion, doHMAC(md, secret, ByteArrayUtils.concatenate(A, data)));
+			A = hmac.doFinal(A);
+			expansion = ByteArrayUtils.concatenate(expansion, hmac.doFinal(ByteArrayUtils.concatenate(A, data)));
 		}
 
 		return ByteArrayUtils.truncate(expansion, length);
-	}
-
-	/**
-	 * Performs the HMAC computation as described in <a
-	 * href="http://tools.ietf.org/html/rfc2104#section-2">RFC 2104</a>.
-	 * 
-	 * @param md
-	 *            the cryptographic hash function.
-	 * @param secret
-	 *            the secret key.
-	 * @param data
-	 *            the data.
-	 * @return the hash after HMAC has been applied.
-	 */
-	public static final byte[] doHMAC(MessageDigest md, byte[] secret, byte[] data) {
-		// the block size of the hash function, always 64 bytes (for SHA-512 it
-		// would be 128 bytes, but not needed right now, except for test
-		// purpose)
-
-		int B = 64;
-		if (md.getAlgorithm().equals("SHA-512") || md.getAlgorithm().equals("SHA-384")) {
-			B = 128;
-		}
-
-		// See http://tools.ietf.org/html/rfc2104#section-2
-		// ipad = the byte 0x36 repeated B times
-		byte[] ipad = new byte[B];
-		Arrays.fill(ipad, (byte) 0x36);
-
-		// opad = the byte 0x5C repeated B times
-		byte[] opad = new byte[B];
-		Arrays.fill(opad, (byte) 0x5C);
-
-		/*
-		 * (1) append zeros to the end of K to create a B byte string (e.g., if
-		 * K is of length 20 bytes and B=64, then K will be appended with 44
-		 * zero bytes 0x00)
-		 */
-		byte[] step1 = secret;
-		if (secret.length < B) {
-			// append zeros to the end of K to create a B byte string
-			step1 = ByteArrayUtils.padArray(secret, (byte) 0x00, B);
-		} else if (secret.length > B) {
-			// Applications that use keys longer
-			// than B bytes will first hash the key using H and then use the
-			// resultant L byte string as the actual key to HMAC.
-			md.update(secret);
-			step1 = md.digest();
-			md.reset();
-
-			step1 = ByteArrayUtils.padArray(step1, (byte) 0x00, B);
-		}
-
-		/*
-		 * (2) XOR (bitwise exclusive-OR) the B byte string computed in step (1)
-		 * with ipad
-		 */
-		byte[] step2 = ByteArrayUtils.xorArrays(step1, ipad);
-
-		/*
-		 * (3) append the stream of data 'text' to the B byte string resulting
-		 * from step (2)
-		 */
-		byte[] step3 = ByteArrayUtils.concatenate(step2, data);
-
-		/*
-		 * (4) apply H to the stream generated in step (3)
-		 */
-		md.update(step3);
-		byte[] step4 = md.digest();
-		md.reset();
-
-		/*
-		 * (5) XOR (bitwise exclusive-OR) the B byte string computed in step (1)
-		 * with opad
-		 */
-		byte[] step5 = ByteArrayUtils.xorArrays(step1, opad);
-
-		/*
-		 * (6) append the H result from step (4) to the B byte string resulting
-		 * from step (5)
-		 */
-		byte[] step6 = ByteArrayUtils.concatenate(step5, step4);
-
-		/*
-		 * (7) apply H to the stream generated in step (6) and output the result
-		 */
-		md.update(step6);
-		byte[] step7 = md.digest();
-
-		return step7;
 	}
 
 	protected final void setCurrentReadState() {
@@ -668,63 +569,65 @@ public abstract class Handshaker {
 	 *            the message fragment
 	 * @return the records containing the message fragment, ready to be sent to the
 	 *            peer
+	 * @throws HandshakeException if the message could not be encrypted using the session's
+	 *            current security parameters
 	 */
-	protected final List<Record> wrapMessage(DTLSMessage fragment) {
-		
-		List<Record> records = new ArrayList<Record>();
+	protected final List<Record> wrapMessage(DTLSMessage fragment) throws HandshakeException {
 
-		ContentType type = null;
-		if (fragment instanceof ApplicationMessage) {
-			type = ContentType.APPLICATION_DATA;
-		} else if (fragment instanceof AlertMessage) {
-			type = ContentType.ALERT;
-		} else if (fragment instanceof ChangeCipherSpecMessage) {
-			type = ContentType.CHANGE_CIPHER_SPEC;
-		} else if (fragment instanceof HandshakeMessage) {
-			type = ContentType.HANDSHAKE;
-			HandshakeMessage handshakeMessage = (HandshakeMessage) fragment;
-			setSequenceNumber(handshakeMessage);
-			
-			byte[] messageBytes = handshakeMessage.fragmentToByteArray();
-			
-			if (messageBytes.length > maxFragmentLength) {
-				/*
-				 * The sender then creates N handshake messages, all with the
-				 * same message_seq value as the original handshake message.
-				 */
-				int messageSeq = handshakeMessage.getMessageSeq();
-
-				int numFragments = (messageBytes.length / maxFragmentLength) + 1;
-				
-				int offset = 0;
-				for (int i = 0; i < numFragments; i++) {
-					int fragmentLength = maxFragmentLength;
-					if (offset + fragmentLength > messageBytes.length) {
-						// the last fragment is normally shorter than the maximal size
-						fragmentLength = messageBytes.length - offset;
-					}
-					byte[] fragmentBytes = new byte[fragmentLength];
-					System.arraycopy(messageBytes, offset, fragmentBytes, 0, fragmentLength);
-					
-					FragmentedHandshakeMessage fragmentedMessage =
-							new FragmentedHandshakeMessage(fragmentBytes, handshakeMessage.getMessageType(), offset, messageBytes.length);
-					
-					// all fragments have the same message_seq
-					fragmentedMessage.setMessageSeq(messageSeq);
-					offset += fragmentBytes.length;
-					
-					records.add(new Record(type, session.getWriteEpoch(), session.getSequenceNumber(), fragmentedMessage, session));
-				}
+		try {
+			switch(fragment.getContentType()) {
+			case HANDSHAKE:
+				return wrapHandshakeMessage((HandshakeMessage) fragment);
+			default:
+				List<Record> records = new ArrayList<Record>();
+				records.add(new Record(fragment.getContentType(), session.getWriteEpoch(), session.getSequenceNumber(),
+						fragment, session));
+				return records;
 			}
+		} catch (GeneralSecurityException e) {
+			throw new HandshakeException(
+					"Cannot create record",
+					new AlertMessage(AlertLevel.FATAL, AlertDescription.INTERNAL_ERROR));
 		}
-		
-		if (records.isEmpty()) { // no fragmentation needed
-			records.add(new Record(type, session.getWriteEpoch(), session.getSequenceNumber(), fragment, session));
-		}
-		
-		return records;
 	}
 
+	private List<Record> wrapHandshakeMessage(HandshakeMessage handshakeMessage) throws GeneralSecurityException {
+		setSequenceNumber(handshakeMessage);
+		List<Record> result = new ArrayList<>();
+		byte[] messageBytes = handshakeMessage.fragmentToByteArray();
+		
+		if (messageBytes.length <= maxFragmentLength) {
+			result.add(new Record(ContentType.HANDSHAKE, session.getWriteEpoch(), session.getSequenceNumber(), handshakeMessage, session));
+		} else {
+			// message needs to be fragmented
+			// The sender then creates N handshake messages, all with the
+			// same message_seq value as the original handshake message
+			int messageSeq = handshakeMessage.getMessageSeq();
+
+			int numFragments = (messageBytes.length / maxFragmentLength) + 1;
+			
+			int offset = 0;
+			for (int i = 0; i < numFragments; i++) {
+				int fragmentLength = maxFragmentLength;
+				if (offset + fragmentLength > messageBytes.length) {
+					// the last fragment is normally shorter than the maximal size
+					fragmentLength = messageBytes.length - offset;
+				}
+				byte[] fragmentBytes = new byte[fragmentLength];
+				System.arraycopy(messageBytes, offset, fragmentBytes, 0, fragmentLength);
+				
+				FragmentedHandshakeMessage fragmentedMessage =
+						new FragmentedHandshakeMessage(fragmentBytes, handshakeMessage.getMessageType(), offset, messageBytes.length);
+				
+				// all fragments have the same message_seq
+				fragmentedMessage.setMessageSeq(messageSeq);
+				offset += fragmentBytes.length;
+				
+				result.add(new Record(ContentType.HANDSHAKE, session.getWriteEpoch(), session.getSequenceNumber(), fragmentedMessage, session));
+			}
+		}
+		return result;
+	}
 	
 	/**
 	 * Determines, using the epoch and sequence number, whether this record is
@@ -733,23 +636,26 @@ public abstract class Handshaker {
 	 * @param record the current received message.
 	 * @return <tt>true</tt> if the current message is the next to process,
 	 *         <tt>false</tt> otherwise.
-	 * @throws HandshakeException
-	 *             if DTLS handshake fails 
+	 * @throws HandshakeException if the record's plaintext fragment could not be parsed
+	 *           into a handshake message
+	 * @throws GeneralSecurityException if the record's ciphertext fragment could not be decrypted 
 	 */
-	protected final boolean processMessageNext(Record record) throws HandshakeException {
+	protected final boolean processMessageNext(Record record) throws HandshakeException, GeneralSecurityException {
 
 		int epoch = record.getEpoch();
 		if (epoch < session.getReadEpoch()) {
 			// discard old message
-			LOGGER.log(Level.FINER, "Discarding message from previous epoch from peer [{0}]", getPeerAddress());
+			LOGGER.log(Level.FINER,
+					"Discarding message from peer [{0}] from finished epoch [{1}] < current epoch [{2}]",
+					new Object[]{getPeerAddress(), epoch, session.getReadEpoch()});
 			return false;
 		} else if (epoch == session.getReadEpoch()) {
 			DTLSMessage fragment = record.getFragment();
-			if (fragment instanceof AlertMessage) {
-				return true; // Alerts must be processed immediately
-			} else if (fragment instanceof ChangeCipherSpecMessage) {
-				return true; // CCS must be processed immediately
-			} else if (fragment instanceof HandshakeMessage) {
+			switch(fragment.getContentType()) {
+			case ALERT:
+			case CHANGE_CIPHER_SPEC:
+				return true;
+			case HANDSHAKE:
 				int messageSeq = ((HandshakeMessage) fragment).getMessageSeq();
 
 				if (messageSeq == nextReceiveSeq) {
@@ -760,24 +666,27 @@ public abstract class Handshaker {
 					}
 					return true;
 				} else if (messageSeq > nextReceiveSeq) {
-					LOGGER.log(Level.FINER, "Queued newer message from same epoch, message_seq [{0}], next_receive_seq [{1}]",
+					LOGGER.log(Level.FINER,
+							"Queued newer message from same epoch, message_seq [{0}] > next_receive_seq [{1}]",
 							new Object[]{messageSeq, nextReceiveSeq});
 					queuedMessages.add(record);
 					return false;
 				} else {
-					LOGGER.log(Level.FINER, "Discarding old message, message_seq [{0}], next_receive_seq [{1}]",
+					LOGGER.log(Level.FINER,
+							"Discarding old message, message_seq [{0}] < next_receive_seq [{1}]",
 							new Object[]{messageSeq, nextReceiveSeq});
 					return false;
 				}
-			} else {
-				LOGGER.log(Level.FINER, "Cannot process HANDSHAKE message of unknwon type");
+			default:
+				LOGGER.log(Level.FINER, "Cannot process HANDSHAKE message of unknown type");
 				return false;
 			}
 		} else {
 			// newer epoch, queue message
 			queuedMessages.add(record);
-			LOGGER.log(Level.FINER, "Queueing HANDSHAKE message from epoch [{0}] > current epoch [{1}]",
-					new Object[]{record.getEpoch(), getSession().getReadEpoch()});
+			LOGGER.log(Level.FINER,
+					"Queueing HANDSHAKE message from future epoch [{0}] > current epoch [{1}]",
+					new Object[]{epoch, getSession().getReadEpoch()});
 			return false;
 		}
 	}
@@ -793,7 +702,7 @@ public abstract class Handshaker {
 	 * @return the reassembled handshake message (if all fragements available),
 	 *         <code>null</code> otherwise.
 	 * @throws HandshakeException
-	 *             if DTLS handshake fails
+	 *             if the reassembled fragments cannot be parsed into a valid <code>HandshakeMessage</code>
 	 */
 	protected final HandshakeMessage handleFragmentation(FragmentedHandshakeMessage fragment) throws HandshakeException {
 		HandshakeMessage reassembledMessage = null;
@@ -829,9 +738,10 @@ public abstract class Handshaker {
 	 * @return the reassembled handshake message (if all fragements available),
 	 *         <code>null</code> otherwise.
 	 * @throws HandshakeException
-	 *             if DTLS handshake fails
+	 *             if the reassembled fragments cannot be parsed into a valid <code>HandshakeMessage</code>
 	 */
-	protected final HandshakeMessage reassembleFragments(int messageSeq, int totalLength, HandshakeType type, DTLSSession session) throws HandshakeException {
+	protected final HandshakeMessage reassembleFragments(int messageSeq, int totalLength, HandshakeType type, DTLSSession session)
+			throws HandshakeException {
 		List<FragmentedHandshakeMessage> fragments = fragmentedMessages.get(messageSeq);
 		HandshakeMessage message = null;
 

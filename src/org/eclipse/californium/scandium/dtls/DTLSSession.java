@@ -166,6 +166,9 @@ public class DTLSSession {
 			this.cipherSuite = CipherSuite.TLS_NULL_WITH_NULL_NULL;
 			this.compressionMethod = CompressionMethod.NULL;
 			this.sequenceNumbers.put(0, initialSequenceNo);
+			// initialize current read/write state with NULL cipher suite
+			this.readState = new DTLSConnectionState();
+			this.writeState = new DTLSConnectionState();
 		}
 	}
 
@@ -339,6 +342,7 @@ public class DTLSSession {
 	 */
 	final synchronized void setReadState(DTLSConnectionState readState) {
 		this.readState = readState;
+		LOGGER.log(Level.FINEST, "Setting current read state to\n{0}", writeState);
 	}
 
 	/**
@@ -371,6 +375,7 @@ public class DTLSSession {
 	 */
 	final synchronized void setWriteState(DTLSConnectionState writeState) {
 		this.writeState = writeState;
+		LOGGER.log(Level.FINEST, "Setting current write state to\n{0}", writeState);
 	}
 
 	final KeyExchangeAlgorithm getKeyExchange() {
@@ -406,7 +411,9 @@ public class DTLSSession {
 			if (masterSecret == null) {
 				throw new NullPointerException("Master secret must not be null");
 			} else if (masterSecret.length != 48) {
-				throw new IllegalArgumentException("Master secret must consist of 48 bytes");
+				throw new IllegalArgumentException(String.format(
+						"Master secret must consist of of exactly 48 bytes but has [%d] bytes",
+						masterSecret.length));
 			} else {
 				this.masterSecret = masterSecret;
 			}

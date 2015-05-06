@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2014 Institute for Pervasive Computing, ETH Zurich and others.
+ * Copyright (c) 2014, 2015 Institute for Pervasive Computing, ETH Zurich and others.
  * 
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
@@ -13,14 +13,15 @@
  * Contributors:
  *    Matthias Kovatsch - creator and main architect
  *    Stefan Jucker - DTLS implementation
- *    Kai Hudalla - fixes & additions
+ *    Kai Hudalla (Bosch Software Innovations GmbH) - fixes & additions
+ *    Kai Hudalla (Bosch Software Innovations GmbH) - add accessors for certificate types
  ******************************************************************************/
 package org.eclipse.californium.scandium.dtls;
 
-import java.util.List;
-
 import org.eclipse.californium.scandium.dtls.AlertMessage.AlertDescription;
 import org.eclipse.californium.scandium.dtls.AlertMessage.AlertLevel;
+import org.eclipse.californium.scandium.dtls.CertificateTypeExtension.CertificateType;
+import org.eclipse.californium.scandium.dtls.HelloExtension.ExtensionType;
 import org.eclipse.californium.scandium.dtls.cipher.CipherSuite;
 import org.eclipse.californium.scandium.util.ByteArrayUtils;
 import org.eclipse.californium.scandium.util.DatagramReader;
@@ -252,55 +253,58 @@ public class ServerHello extends HandshakeMessage {
 	}
 
 	/**
-	 * Gets the client's certificate type.
+	 * Gets the type of certificate the server expects the client to send in
+	 * its <em>Certificate</em> message.
 	 * 
-	 * @return the client's certificate type extension if available,
-	 *         otherwise <code>null</code>.
+	 * @return the type
 	 */
-	public ClientCertificateTypeExtension getClientCertificateTypeExtension() {
+	CertificateType getClientCertificateType() {
+		// default type is always X.509
+		CertificateType result = CertificateType.X_509;
 		if (extensions != null) {
-			List<HelloExtension> exts = extensions.getExtensions();
-			for (HelloExtension helloExtension : exts) {
-				if (helloExtension instanceof ClientCertificateTypeExtension) {
-					return (ClientCertificateTypeExtension) helloExtension;
-				}
+			ClientCertificateTypeExtension ext = (ClientCertificateTypeExtension)
+					extensions.getExtension(ExtensionType.CLIENT_CERT_TYPE);
+			if (ext != null && !ext.getCertificateTypes().isEmpty()) {
+				result = ext.getCertificateTypes().get(0);
 			}
 		}
-		return null;
+		return result;
 	}
 	
 	/**
+	 * Gets the type of certificate the server will send to the client in
+	 * its <em>Certificate</em> message.
 	 * 
-	 * @return the client's certificate type extension if available,
-	 *         otherwise <code>null</code>.
+	 * @return the type
 	 */
-	public ServerCertificateTypeExtension getServerCertificateTypeExtension() {
+	CertificateType getServerCertificateType() {
+		// default type is always X.509
+		CertificateType result = CertificateType.X_509;
 		if (extensions != null) {
-			List<HelloExtension> exts = extensions.getExtensions();
-			for (HelloExtension helloExtension : exts) {
-				if (helloExtension instanceof ServerCertificateTypeExtension) {
-					return (ServerCertificateTypeExtension) helloExtension;
-				}
+			ServerCertificateTypeExtension ext = (ServerCertificateTypeExtension)
+					extensions.getExtension(ExtensionType.SERVER_CERT_TYPE);
+			if (ext != null && !ext.getCertificateTypes().isEmpty()) {
+				result = ext.getCertificateTypes().get(0);
 			}
 		}
-		return null;
+		return result;
 	}
 	
 	@Override
 	public String toString() {
 		StringBuilder sb = new StringBuilder();
 		sb.append(super.toString());
-		sb.append("\t\tServer Version: " + serverVersion.getMajor() + ", " + serverVersion.getMinor() + "\n");
-		sb.append("\t\tRandom: \n" + random.toString());
-		sb.append("\t\tSession ID Length: " + sessionId.length() + "\n");
+		sb.append("\t\tServer Version: ").append(serverVersion.getMajor()).append(", ").append(serverVersion.getMinor());
+		sb.append("\n\t\tRandom: \n").append(random);
+		sb.append("\t\tSession ID Length: ").append(sessionId.length());
 		if (sessionId.length() > 0) {
-			sb.append("\t\tSession ID: " + ByteArrayUtils.toHexString(sessionId.getSessionId()) + "\n");
+			sb.append("\n\t\tSession ID: ").append(ByteArrayUtils.toHexString(sessionId.getSessionId()));
 		}
-		sb.append("\t\tCipher Suite: " + cipherSuite.toString() + "\n");
-		sb.append("\t\tCompression Method: " + compressionMethod.toString() + "\n");
+		sb.append("\n\t\tCipher Suite: ").append(cipherSuite);
+		sb.append("\n\t\tCompression Method: ").append(compressionMethod);
 		
 		if (extensions != null) {
-			sb.append(extensions.toString());
+			sb.append("\n").append(extensions);
 		}
 
 		return sb.toString();
